@@ -4,7 +4,9 @@
   "description": "Example backend written in node. This aims to help people get started connecting their LLM.",
   "main": "index.js",
   "scripts": {
-    "dev": "NODE_ENV=development nodemon src/index.ts"
+    "dev": "NODE_ENV=development nodemon src/index.ts",
+    "build": "tsc",
+    "start": "NODE_ENV=production node dist/index.js"
   },
   "author": "",
   "license": "ISC",
@@ -13,8 +15,9 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.1",
     "express": "^4.18.2",
+    "express-rate-limit": "^7.2.0",
     "express-ws": "^5.0.2",
-    "openai": "^4.38.2",
+    "openai": "^4.38.5",
     "retell-client-js-sdk": "^1.3.2",
     "retell-sdk": "^3.5.0",
     "twilio": "^4.21.0"

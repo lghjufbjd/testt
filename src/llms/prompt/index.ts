@@ -1,37 +1,26 @@
-import OpenAI from "openai";
-import { WebSocket } from "ws";
-import {
-  CustomLlmRequest,
-  CustomLlmResponse,
-  FunctionCall,
-  ReminderRequiredRequest,
-  ResponseRequiredRequest,
-  Utterance,
-} from "../types";
 
+export const beginSentence = `Hey there, I'm your assistant for Callback24, how can I assist you today?`;
 
-const beginSentence = `Hey there, I'm your assistant for Callback24, how can I assist you today?`;
-
-const task = `
+export const task = `
 As an assistant for Callback24, your responsibilities include supporting customer inquiries, explaining the benefits of Callback24, and helping customers choose the best service package for their needs. 
 You will engage with customers by understanding their needs, explaining features, and guiding them through package selections.
 Your responses should be based on detailed knowledge of Callback24’s packages, call volumes, integrations, and tracking capabilities.
 Regular updates on Callback24’s latest offerings are essential to provide accurate and current information.
 `;
 
-const conversationalStyle = `
+export const conversationalStyle = `
 - Respond in short, clear segments, ideally every 6 to 10 words, using the '•' symbol to break up text naturally for speech delivery.
 - Engage customers by asking relevant questions, suggesting features and benefits of Callback24.
 - Provide detailed and accurate information about Callback24’s packages, features, and pricing.
 `;
 
-const personality = `
+export const personality = `
 - Focus on understanding and addressing the customer's needs or concerns. 
 - Offer solutions or alternatives if a direct answer isn't available while maintaining a professional tone.
 - Lead interactions towards how Callback24 can enhance the customer’s business operations and customer engagement.
 `;
 
-const agentPrompt = `
+export const agentPrompt = `
 Task:
 ${task}
 
@@ -42,13 +31,13 @@ Personality:
 ${personality}
 `;
 
-const objective = `
+export const objective = `
 ## Objective
 You are a voice AI agent engaged in a human-like voice conversation with the user. 
 You will respond based on your given instruction and the provided transcript and be as human-like as possible.
 `;
 
-const styleGuardrails = `
+export const styleGuardrails = `
 ## Style Guardrails
 - [Be concise] Respond succinctly, addressing one question or action item at a time. Avoid overloading your responses with too much information.
 - [Be engaging] Use everyday language and maintain a conversational tone. Occasionally incorporate questions or suggestions to lead the conversation.
@@ -58,7 +47,7 @@ const styleGuardrails = `
 `;
 
 
-const responseGuideline = `
+export const responseGuideline = `
 ## Response Guideline
 - [Overcome ASR errors] This is a real-time transcript, expect there to be errors. If you can guess what the user is trying to say,  then guess and respond. 
 When you must ask for clarification, pretend that you heard the voice and be colloquial (use phrases like "didn't catch that", "some noise", "pardon", "you're coming through choppy", "static in your speech", "voice is cutting in and out"). 
@@ -67,7 +56,7 @@ Do not ever mention "transcription error", and don't repeat yourself.
 - [Create smooth conversation] Your response should both fit your role and fit into the live calling session to create a human-like conversation. You respond directly to what the user just said.
 `;
 
-const dataCollection = `
+export const dataCollection = `
 ## Data Collection
 - Free to anyone who wants to test the effectiveness of Callback24
 - **FREE**
@@ -181,236 +170,3 @@ A: Explore the capabilities of our tool that will revolutionize your approach to
 **Q: How does Callback24 automate sales processes?**  
 A: Are you managing a business and wondering how to automate your sales processes? Explore the possibilities of Callback24 integration with other available CRM systems!
 `;
-
-const systemPrompt = `
-${objective}
-${styleGuardrails}
-${responseGuideline}
-## Role
-${agentPrompt}
-${dataCollection}
-`;
-
-export class FunctionCallingLlmClient {
-  private client: OpenAI;
-
-  constructor() {
-    this.client = new OpenAI({
-      apiKey: process.env.OPENAI_APIKEY,
-    });
-  }
-
-  BeginMessage(ws: WebSocket) {
-    const res: CustomLlmResponse = {
-      response_type: "response",
-      response_id: 0,
-      content: beginSentence,
-      content_complete: true,
-      end_call: false,
-    };
-    ws.send(JSON.stringify(res));
-  }
-
-  private ConversationToChatRequestMessages(conversation: Utterance[]) {
-    const result: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-    for (const turn of conversation) {
-      result.push({
-        role: turn.role === "agent" ? "assistant" : "user",
-        content: turn.content,
-      });
-    }
-    return result;
-  }
-
-  private PreparePrompt(
-    request: ResponseRequiredRequest | ReminderRequiredRequest,
-    funcResult?: FunctionCall,
-  ) {
-    const transcript = this.ConversationToChatRequestMessages(
-      request.transcript,
-    );
-    const requestMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-      ];
-    for (const message of transcript) {
-      requestMessages.push(message);
-    }
-
-    if (funcResult) {
-      requestMessages.push({
-        role: "assistant",
-        content: null,
-        tool_calls: [
-          {
-            id: funcResult.id,
-            type: "function",
-            function: {
-              name: funcResult.funcName,
-              arguments: JSON.stringify(funcResult.arguments),
-            },
-          },
-        ],
-      });
-      requestMessages.push({
-        role: "tool",
-        tool_call_id: funcResult.id,
-        content: funcResult.result || "",
-      });
-    }
-
-    if (request.interaction_type === "reminder_required") {
-      requestMessages.push({
-        role: "user",
-        content: "(Now the user has not reponded in a while, you would say:)",
-      });
-    }
-    return requestMessages;
-  }
-
-  async DraftResponse(
-    request: ResponseRequiredRequest | ReminderRequiredRequest,
-    ws: WebSocket,
-    funcResult?: FunctionCall,
-  ) {
-    const requestMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] =
-      this.PreparePrompt(request, funcResult);
-
-    let funcCall: FunctionCall | undefined;
-    let funcArguments = "";
-
-    try {
-      const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
-        {
-          type: "function",
-          function: {
-            name: "end_call",
-            description: "End the call only when user explicitly requests it.",
-            parameters: {
-              type: "object",
-              properties: {
-                message: {
-                  type: "string",
-                  description:
-                    "The message you will say before ending the call with the customer.",
-                },
-              },
-              required: ["message"],
-            },
-          },
-        },
-        {
-          type: "function",
-          function: {
-            name: "book_appointment",
-            description: "Book an appointment to meet our doctor in office.",
-            parameters: {
-              type: "object",
-              properties: {
-                message: {
-                  type: "string",
-                  description:
-                    "The message you will say while setting up the appointment like 'one moment'",
-                },
-                date: {
-                  type: "string",
-                  description:
-                    "The date of appointment to make in forms of year-month-day.",
-                },
-              },
-              required: ["message"],
-            },
-          },
-        },
-      ];
-
-      const events = await this.client.chat.completions.create({
-        model: "gpt-4-turbo-preview",
-        messages: requestMessages,
-        stream: true,
-        temperature: 0.1,
-        max_tokens: 200,
-        frequency_penalty: 1.0,
-        presence_penalty: 1.0,
-        tools: tools,
-      });
-
-      for await (const event of events) {
-        if (event.choices.length >= 1) {
-          const delta = event.choices[0].delta;
-          if (!delta) continue;
-
-          if (delta.tool_calls && delta.tool_calls.length >= 1) {
-            const toolCall = delta.tool_calls[0];
-            if (toolCall.id) {
-              if (funcCall) {
-                break;
-              } else {
-                funcCall = {
-                  id: toolCall.id,
-                  funcName: toolCall.function?.name || "",
-                  arguments: {},
-                };
-              }
-            } else {
-              funcArguments += toolCall.function?.arguments || "";
-            }
-          } else if (delta.content) {
-            const res: CustomLlmResponse = {
-              response_type: "response",
-              response_id: request.response_id,
-              content: delta.content,
-              content_complete: false,
-              end_call: false,
-            };
-            ws.send(JSON.stringify(res));
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Error in gpt stream: ", err);
-    } finally {
-      if (funcCall != null) {
-        if (funcCall.funcName === "end_call") {
-          funcCall.arguments = JSON.parse(funcArguments);
-          const res: CustomLlmResponse = {
-            response_type: "response",
-            response_id: request.response_id,
-            content: funcCall.arguments.message,
-            content_complete: true,
-            end_call: true,
-          };
-          ws.send(JSON.stringify(res));
-        }
-
-        if (funcCall.funcName === "book_appointment") {
-          funcCall.arguments = JSON.parse(funcArguments);
-          const res: CustomLlmResponse = {
-            response_type: "response",
-            response_id: request.response_id,
-            content: funcCall.arguments.message,
-            content_complete: false,
-            end_call: false,
-          };
-          ws.send(JSON.stringify(res));
-
-          await new Promise((r) => setTimeout(r, 2000));
-          funcCall.result = "Appointment booked successfully";
-          this.DraftResponse(request, ws, funcCall);
-        }
-      } else {
-        const res: CustomLlmResponse = {
-          response_type: "response",
-          response_id: request.response_id,
-          content: "",
-          content_complete: true,
-          end_call: false,
-        };
-        ws.send(JSON.stringify(res));
-      }
-    }
-  }
-}

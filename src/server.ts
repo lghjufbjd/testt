@@ -5,9 +5,10 @@ import cors from "cors";
 import expressWs from "express-ws";
 import { TwilioClient } from "./twilio_api";
 import { Retell } from "retell-sdk";
+import rateLimit from "express-rate-limit";
 import { RegisterCallResponse } from "retell-sdk/resources/call";
 import { CustomLlmRequest, CustomLlmResponse } from "./types";
-import { FunctionCallingLlmClient } from "./llms/llm_openai_func_call";
+import { AssistantLlmClient } from "./llms/llm_openai_assistant";
 
 export class Server {
   private httpServer: HTTPServer;
@@ -22,6 +23,14 @@ export class Server {
     this.app.use(cors());
     this.app.use(express.urlencoded({ extended: true }));
 
+    const callRegisterRateLimiter = rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 1000,
+      message: "Rate limit exceeded. Call ended.",
+    });
+
+    this.app.use("/register-call-on-your-server", callRegisterRateLimiter);
+
     this.handleRetellLlmWebSocket();
     this.handleRegisterCallAPI();
 
@@ -30,11 +39,11 @@ export class Server {
     });
 
     this.twilioClient = new TwilioClient(this.retellClient);
- 
+
     this.twilioClient.ListenTwilioVoiceWebhook(this.app);
     this.twilioClient.RegisterPhoneAgent(
       "+48732071474",
-      "b80beb271c18b7dcb2d7b84c8e7117b7",
+      "0ce0650ec5ea7cc362490d68fdab1699",
     );
   }
 
@@ -83,44 +92,43 @@ export class Server {
           };
           ws.send(JSON.stringify(config));
 
-          const llmClient = new FunctionCallingLlmClient();
+          const llmClient = new AssistantLlmClient();
 
           ws.on("error", (err) => {
             console.error("Error received in LLM websocket client: ", err);
           });
-          ws.on("close", (err) => {
+          ws.on("close", () => {
             console.error("Closing llm ws for: ", callId);
           });
 
           ws.on("message", async (data: RawData, isBinary: boolean) => {
             if (isBinary) {
               console.error("Got binary message instead of text in websocket.");
-              ws.close(1002, "Cannot find corresponding Retell LLM.");
-            }
-            const request: CustomLlmRequest = JSON.parse(data.toString());
-
-            if (request.interaction_type === "call_details") {
-              console.log("call details: ", request.call);
-              llmClient.BeginMessage(ws);
-            } else if (
-              request.interaction_type === "reminder_required" ||
-              request.interaction_type === "response_required"
-            ) {
-              console.clear();
-              console.log("req", request);
-              llmClient.DraftResponse(request, ws);
-            } else if (request.interaction_type === "ping_pong") {
-              let pingpongResponse: CustomLlmResponse = {
-                response_type: "ping_pong",
-                timestamp: request.timestamp,
-              };
-              ws.send(JSON.stringify(pingpongResponse));
-            } else if (request.interaction_type === "update_only") {
+              ws.close(1002, "Binary message not supported.");
+            } else {
+              const request: CustomLlmRequest = JSON.parse(data.toString());
+              if (request.interaction_type === "call_details") {
+                console.log("Call details: ", request.call);
+                llmClient.BeginMessage(ws);
+              } else if (
+                request.interaction_type === "reminder_required" ||
+                request.interaction_type === "response_required"
+              ) {
+                console.log("Request:", request);
+                llmClient.DraftResponse(request, ws);
+              } else if (request.interaction_type === "ping_pong") {
+                let pingpongResponse: CustomLlmResponse = {
+                  response_type: "ping_pong",
+                  timestamp: request.timestamp,
+                };
+                ws.send(JSON.stringify(pingpongResponse));
+              } else if (request.interaction_type === "update_only") {
+              }
             }
           });
         } catch (err) {
-          console.error("Encountered erorr:", err);
-          ws.close(1005, "Encountered erorr: " + err);
+          console.error("Encountered error:", err);
+          ws.close(1005, "Encountered error: " + err);
         }
       },
     );
